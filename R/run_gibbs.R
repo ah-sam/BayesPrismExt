@@ -251,6 +251,9 @@ run.gibbs.refPhi.ini <- function(gibbsSampler.obj,
 	gibbs.idx <- get.gibbs.idx(gibbs.control)
 	seed <- gibbs.control$seed
 
+	# bind internal sampling functions from package namespace so they are
+	# available in this local environment for export to worker processes
+	sample.Z.theta_n <- BayeSamPrism:::sample.Z.theta_n
 	sample.theta_n <- BayeSamPrism:::sample.theta_n
 	rdirichlet <- BayeSamPrism:::rdirichlet
 	
@@ -381,8 +384,8 @@ run.gibbs.refTumor <- function(gibbsSampler.obj){
 	gibbs.idx <- get.gibbs.idx(gibbs.control)
 	seed <- gibbs.control$seed
 	
-	sample.theta_n <- BayesPrism:::sample.theta_n
-	rdirichlet <- BayesPrism:::rdirichlet
+	sample.theta_n <- BayeSamPrism:::sample.theta_n
+	rdirichlet <- BayeSamPrism:::rdirichlet
 
 	tmp.dir <- tempdir(check=TRUE)
 	for(n in 1:nrow(psi_mal)) {
