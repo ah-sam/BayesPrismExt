@@ -54,7 +54,8 @@ newJointPost <- function(bulkID,
 	
 	constant <- sum(unlist(lapply(gibbs.list, '[[', "gibbs.constant")))
 	 
-	new("jointPost", Z = Z, Z.cv = Z.cv, theta = theta, theta.cv = theta.cv, constant = constant)
+	-	new("jointPost", Z = Z, Z.cv = Z.cv, theta = theta)
++	new("jointPost", Z = Z, Z.cv = Z.cv, theta = theta, theta.cv = theta.cv)
 }
 
 
