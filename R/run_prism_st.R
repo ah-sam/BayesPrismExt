@@ -38,23 +38,13 @@ run.prism.st <- function(prism,
 	jointPost.update.ct <- mergeK(jointPost.obj = jointPost.update, 
 					   		   	  map = prism@map)
 	
-<<<<<<< HEAD
-    bp.obj <- new("BayesPrismST",
- 			   prism = prism,
- 			   posterior.cellState = jointPost.update,
- 			   posterior.cellType = jointPost.update.ct,
- 			   reference.update = psi,
- 			   control_param = list(gibbs.control = gibbs.control, 
-        					opt.control = opt.control))
-=======
-	bp.obj <- new("BayesSamPrismST",
+	bp.obj <- new("BayesPrismST",
 		 		   prism = prism,
 		 		   posterior.cellState = jointPost.update,
 		 		   posterior.cellType = jointPost.update.ct,
 		 		   reference.update = psi,
 		 		   control_param = list(gibbs.control = gibbs.control, 
          								opt.control = opt.control))
->>>>>>> e6d424b41f32331abe29f6bb3b7cd59a3b97ed77
          			 
 	return(bp.obj) 		
 }
