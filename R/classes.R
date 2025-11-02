@@ -202,12 +202,14 @@ setClass("thetaPost",
 setClass("jointPost",
          slots = c(
            Z = "array",
+           Z.cv = "array",
            theta = "matrix",
            theta.cv = "matrix",
            constant = "numeric"
          ),
          prototype = list(
            Z = array(),
+           Z.cv = array(),
            theta = matrix(),
            theta.cv = matrix(),
            constant = numeric()
@@ -224,6 +226,26 @@ setClass("jointPost",
   				msg <- paste("cell type/state names do not match")
   				errors <- c(errors, msg)
   			}
+
+            if(!identical(dim(object@Z), dim(object@Z.cv))){
+                msg <- paste("Z and Z.cv dimensions do not match")
+                errors <- c(errors, msg)
+            }
+            
+            if(!identical(dimnames(object@Z), dimnames(object@Z.cv))){
+                msg <- paste("Z and Z.cv dimnames do not match")
+                errors <- c(errors, msg)
+            }
+            
+            if(!identical(dim(object@theta), dim(object@theta.cv))){
+                msg <- paste("theta and theta.cv dimensions do not match")
+                errors <- c(errors, msg)
+            }
+            
+            if(!identical(dimnames(object@theta), dimnames(object@theta.cv))){
+                msg <- paste("theta and theta.cv dimnames do not match")
+                errors <- c(errors, msg)
+            }
   			  											
          	if (length(errors) == 0) TRUE else errors
          }

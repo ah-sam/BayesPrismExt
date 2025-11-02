@@ -251,14 +251,14 @@ run.gibbs.refPhi.ini <- function(gibbsSampler.obj,
 	gibbs.idx <- get.gibbs.idx(gibbs.control)
 	seed <- gibbs.control$seed
 
+	sample.Z.theta_n <- BayeSamPrism:::sample.Z.theta_n
+	rdirichlet <- BayeSamPrism:::rdirichlet
+	
 	cat("Start run... \n")
 	
 	if(gibbs.control$n.cores>1){	
 		#parallel using snowfall	
 		sfInit(parallel = TRUE, cpus = gibbs.control$n.cores, type = "SOCK" )
-		
-		sample.Z.theta_n <- BayesPrism:::sample.Z.theta_n
-		rdirichlet <- BayesPrism:::rdirichlet
 					
 		cpu.fun <- function(n) {
 			if(!is.null(seed)) set.seed(seed)
@@ -318,15 +318,15 @@ run.gibbs.refPhi.final <- function(gibbsSampler.obj,
 	
 	gibbs.idx <- get.gibbs.idx(gibbs.control)
 	seed <- gibbs.control$seed
+
+	sample.theta_n <- BayeSamPrism:::sample.theta_n
+	rdirichlet <- BayeSamPrism:::rdirichlet
 	
 	cat("Start run... \n")
 	
 	if(gibbs.control$n.cores>1){	
 		#parallel using snowfall	
 		sfInit(parallel = TRUE, cpus = gibbs.control$n.cores, type = "SOCK" )
-		
-		sample.theta_n <- BayesPrism:::sample.theta_n
-		rdirichlet <- BayesPrism:::rdirichlet
 		
 		cpu.fun <- function(n) {
 			if(!is.null(seed)) set.seed(seed)
