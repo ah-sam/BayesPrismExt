@@ -24,17 +24,22 @@ rdirichlet <- function(alpha){
 
 
 #' function to run Gibbs sampling for Z and theta on each bulk
+#' MODIFIED TO SUPPORT CHAIN SAVING TO HDF5
 #' @param X_n a numeric vector of reads count of the nth bulk sample
 #' @param phi an array of dimension K*G to denote reference matrix
 #' @param alpha a numeric value to denote the symmetric Dirichlet prior 
 #' @param gibbs.idx a numeric vector to denote the index of samples to be retained from MCMC chain
 #' @param compute.elbo a logical variable to denote if compute ELBO. Default=FALSE.
-#' return a list containing the posterior mean of Z_n and theta_n
+#' @param save.chain logical, if TRUE return full chain instead of just posterior mean. Default=FALSE.
+#' @param thin integer, thinning factor for saving chain. Default=5. Only used if save.chain=TRUE.
+#' return a list containing posterior mean of Z_n and theta_n (or full chains if save.chain=TRUE)
 sample.Z.theta_n <- function(X_n, 
-				        	 	 phi,
-				        	 	alpha,
-				        	 	gibbs.idx,
-				        	 	compute.elbo=FALSE){
+			        		 	phi,
+			        		 	alpha,
+			        		 	gibbs.idx,
+			        		 	compute.elbo=FALSE,
+			        		 	save.chain=FALSE,
+			        		 	thin=5){
 		
 	G <- ncol(phi)
 	K <- nrow(phi)
@@ -47,6 +52,15 @@ sample.Z.theta_n <- function(X_n,
 	theta_n.sum <- rep(0, K)
 	theta_n2.sum <- rep(0, K)
 	
+	# Storage for chain if requested
+	if(save.chain) {
+		n_chain_samples <- ceiling(length(gibbs.idx) / thin)
+		chain_theta <- array(NA, dim = c(n_chain_samples, K))
+		chain_Z <- array(NA, dim = c(n_chain_samples, G, K))
+		chain_idx <- 0
+		saved_samples <- 0
+	}
+	
 	#variable for computing ELBO
 	multinom.coef <- 0
 
@@ -56,8 +70,8 @@ sample.Z.theta_n <- function(X_n,
 		prob.mat <- phi * theta_n.i #multiply by each column
 
 		for (g in 1:G) Z_n.i[g,] <- rmultinom(n = 1, 
-										   size = X_n[g], 
-										   prob = prob.mat[,g])				
+								   size = X_n[g], 
+								   prob = prob.mat[,g])				
 		# sample theta for patient n
 		Z_nk.i <- colSums(Z_n.i) #total count for each cell type
 		theta_n.i <- rdirichlet(alpha = Z_nk.i + alpha)
@@ -69,13 +83,20 @@ sample.Z.theta_n <- function(X_n,
 			theta_n.sum <- theta_n.sum + theta_n.i
 			theta_n2.sum <- theta_n2.sum + theta_n.i^2
 			
+			# SAVE CHAIN (every thin-th retained sample)
+			if(save.chain & (saved_samples %% thin == 0)) {
+				chain_idx <- chain_idx + 1
+				chain_theta[chain_idx, ] <- theta_n.i
+				chain_Z[chain_idx, , ] <- Z_n.i
+			}
+			
+			if(save.chain) {
+				saved_samples <- saved_samples + 1
+			}
+			
 			if(compute.elbo){
-				# multinom.coef.i <- sum((alpha-1) * log(theta_n.i), na.rm=TRUE) + 
-								   # sum(Z_nk.i * log(theta_n.i), na.rm=TRUE) - 
-								   # sum(lfactorial(Z_nk.i)) - sum(lfactorial(Z_n.i))
 				multinom.coef.i <- sum(lfactorial(Z_nk.i)) - sum(lfactorial(Z_n.i))
 				multinom.coef <- multinom.coef + multinom.coef.i
-				
 			}	
 		}
 		
@@ -83,22 +104,30 @@ sample.Z.theta_n <- function(X_n,
 	}
 	
 	samples.size <- length(gibbs.idx)
-	#gibbs.constant <- multinom.coef + z.logtheta + theta.dirichlet.alpha
 	
 	Z_n <- Z_n.sum / samples.size
 	Z.cv_n <- sqrt(Z_n2.sum / samples.size - (Z_n^2)) / Z_n
 	theta_n <- theta_n.sum / samples.size
 	theta.cv_n <- sqrt(theta_n2.sum / samples.size - (theta_n^2)) / theta_n
 	gibbs.constant <- multinom.coef / samples.size
-		
-	return(list(Z_n = Z_n, 
-			    Z.cv_n = Z.cv_n,
-			    theta_n = theta_n,
-			    theta.cv_n = theta.cv_n,
-			    gibbs.constant = gibbs.constant))
+	
+	if(save.chain) {
+		# Trim chain arrays to actual size
+		return(list(Z_n = Z_n, 
+				    Z.cv_n = Z.cv_n,
+				    theta_n = theta_n,
+				    theta.cv_n = theta.cv_n,
+				    gibbs.constant = gibbs.constant,
+				    chain_theta = chain_theta[1:chain_idx, ],
+				    chain_Z = chain_Z[1:chain_idx, , ]))
+	} else {
+		return(list(Z_n = Z_n, 
+				    Z.cv_n = Z.cv_n,
+				    theta_n = theta_n,
+				    theta.cv_n = theta.cv_n,
+				    gibbs.constant = gibbs.constant))
+	}
 }
-
-
 
 #' function to run Gibbs sampling for only theta on each bulk (updated Gibbs)
 #' @param X_n a numeric vector of reads count of the nth bulk sample
@@ -149,8 +178,7 @@ sample.theta_n <- function(X_n,
 }
 
 
-#' function to convert seconds to day/hour/min/sec. used to report the estimated the run time of gibbs sampler
-#' adpated from https://stackoverflow.com/questions/27312292/convert-seconds-to-days-hoursminutesseconds
+#' function to convert seconds to day/hour/min/sec
 #' @param x numeric value in the unit of seconds
 my_seconds_to_period <- function(x) {
 	days = round(x %/% (60 * 60 * 24))
@@ -220,8 +248,7 @@ estimate.gibbs.time <- function(gibbsSampler.obj,
 	total.time <- proc.time() - ptm
 	total.time <- as.numeric(total.time["elapsed"])
 	
-	# seems to underestimate when transferring data comsumes large amount of time (spatial data)
-	estimated.time <- gibbs.control $chain.length / chain.length * total.time * ceiling(nrow(X) / gibbs.control$n.cores) *2 		
+	estimated.time <- gibbs.control$chain.length / chain.length * total.time * ceiling(nrow(X) / gibbs.control$n.cores) * 2 		
 	current.time <- Sys.time()
 	
 	cat("Current time: ", as.character(current.time), "\n")
@@ -231,17 +258,111 @@ estimate.gibbs.time <- function(gibbsSampler.obj,
 }
 
 
+#' HELPER FUNCTION: Initialize HDF5 file for chain storage
+#' Call this ONCE before running Gibbs sampling
+#' @param h5.file character, path to HDF5 file
+#' @param n_samples number of bulk samples
+#' @param n_genes number of genes
+#' @param n_celltypes number of cell types
+#' @param chain.length total chain length
+#' @param burn.in burn-in length
+#' @param thinning thinning rate
+init.h5.gibbs <- function(h5.file, n_samples, n_genes, n_celltypes, 
+                          chain.length, burn.in, thinning) {
+	
+	library(rhdf5)
+	
+	# Calculate expected number of saved iterations
+	gibbs.idx <- get.gibbs.idx(list(chain.length = chain.length, 
+	                                  burn.in = burn.in, 
+	                                  thinning = thinning))
+	n_iterations <- ceiling(length(gibbs.idx) / 5)  # Divide by thin=5
+	
+	# Create file
+	h5createFile(h5.file)
+	
+	# theta dataset: n_samples x n_iterations x n_celltypes
+	h5createDataset(h5.file, "theta", 
+	                dims = c(n_samples, n_iterations, n_celltypes),
+	                storage.mode = "double",
+	                chunk = c(1, 50, n_celltypes),
+	                level = 9)  # Compression level 9
+	
+	# Z dataset: n_samples x n_iterations x n_genes x n_celltypes
+	h5createDataset(h5.file, "Z", 
+	                dims = c(n_samples, n_iterations, n_genes, n_celltypes),
+	                storage.mode = "double",
+	                chunk = c(1, 50, n_genes, n_celltypes),
+	                level = 9)  # Compression level 9
+	
+	cat("HDF5 file initialized at:", h5.file, "\n")
+	cat("Dimensions - Samples:", n_samples, "Iterations:", n_iterations, 
+	    "Genes:", n_genes, "CellTypes:", n_celltypes, "\n")
+}
+
+
+#' HELPER FUNCTION: Write chains to HDF5 after parallel execution
+#' Call this AFTER sfStop() to sequentially write all chains to disk
+#' @param gibbs.list list of results from parallel sampling (each element has chain_theta, chain_Z)
+#' @param h5.file character, path to HDF5 file
+#' @param sample.names character vector of sample names/IDs
+write.chains.to.h5 <- function(gibbs.list, h5.file, sample.names) {
+	library(rhdf5)
+	
+	cat("Writing Gibbs chains to HDF5...\n")
+	
+	for(n in 1:length(gibbs.list)) {
+		result <- gibbs.list[[n]]
+		
+		if(!is.null(result$chain_theta)) {
+			# Write theta chain for this sample
+			h5write(result$chain_theta, h5.file, "theta", 
+			        index = list(n, 1:nrow(result$chain_theta), NULL))
+			
+			# Write Z chain for this sample
+			h5write(result$chain_Z, h5.file, "Z", 
+			        index = list(n, 1:nrow(result$chain_Z), NULL, NULL))
+			
+			cat("Sample", n, "-", sample.names[n], "written\n")
+		}
+	}
+	
+	cat("All chains written to:", h5.file, "\n")
+}
+
+
+#' HELPER FUNCTION: Read chain from HDF5
+#' @param h5.file character, path to HDF5 file
+#' @param sample.idx integer, sample index (row number)
+#' @param param character, "theta" or "Z"
+#' @return array of dimension n_iterations x n_celltypes (for theta) or n_iterations x n_genes x n_celltypes (for Z)
+read.h5.chain <- function(h5.file, sample.idx, param = "theta") {
+	library(rhdf5)
+	stopifnot(param %in% c("theta", "Z"))
+	
+	if(param == "theta") {
+		chain <- h5read(h5.file, "theta", index = list(sample.idx, NULL, NULL))
+	} else {
+		chain <- h5read(h5.file, "Z", index = list(sample.idx, NULL, NULL, NULL))
+	}
+	return(chain)
+}
 
 
 
 
 #' function to run initial Gibbs sampling if reference is of the class refPhi
-#'
-#' @param gibbsSampler.obj, a gibbsSampler object
+#' MODIFIED TO SUPPORT CHAIN SAVING
+#' @param gibbsSampler.obj a gibbsSampler object
+#' @param compute.elbo logical, compute ELBO. Default=FALSE.
+#' @param save.chain logical, save full chains to HDF5. Default=FALSE.
+#' @param h5.file character, path to HDF5 file. Required if save.chain=TRUE.
 #' @import snowfall
 #' @return a jointPost object with Z and theta entries 
 run.gibbs.refPhi.ini <- function(gibbsSampler.obj,
-							 	   compute.elbo){
+							 	   compute.elbo,
+							 	   save.chain=FALSE,
+							 	   h5.file=NULL){
 	
 	phi <- gibbsSampler.obj@reference@phi
 	X <- gibbsSampler.obj@X
@@ -253,6 +374,12 @@ run.gibbs.refPhi.ini <- function(gibbsSampler.obj,
 
 	sample.Z.theta_n <- BayeSamPrism:::sample.Z.theta_n
 	rdirichlet <- BayeSamPrism:::rdirichlet
+	
+	# Initialize HDF5 if saving chains
+	if(save.chain & !is.null(h5.file)) {
+		init.h5.gibbs(h5.file, nrow(X), ncol(phi), nrow(phi),
+		              gibbs.control$chain.length, gibbs.control$burn.in, gibbs.control$thinning)
+	}
 	
 	cat("Start run... \n")
 	
@@ -270,11 +397,13 @@ run.gibbs.refPhi.ini <- function(gibbsSampler.obj,
 							  phi = phi, 
 							  alpha = alpha, 
 							  gibbs.idx = gibbs.idx, 
-							  compute.elbo = compute.elbo)		
+							  compute.elbo = compute.elbo,
+							  save.chain = save.chain,
+							  thin = 5)		
 		}
 		tmp.dir <- tempdir(check=TRUE)
 		sfExport("phi", "alpha", "gibbs.idx", "seed", 
-				 	"compute.elbo", "sample.Z.theta_n","rdirichlet","tmp.dir")
+				 	"compute.elbo", "sample.Z.theta_n","rdirichlet","tmp.dir", "save.chain")
 		environment(cpu.fun) <- globalenv()
 		gibbs.list <- sfLapply( 1:nrow(X), cpu.fun)
 		sfStop()
@@ -285,10 +414,17 @@ run.gibbs.refPhi.ini <- function(gibbsSampler.obj,
 				if(!is.null(seed)) set.seed(seed)
 				cat(n," ")
 				sample.Z.theta_n (X_n = X[n,], phi = phi, alpha = alpha, 
-								  gibbs.idx = gibbs.idx, compute.elbo = compute.elbo)
+								  gibbs.idx = gibbs.idx, compute.elbo = compute.elbo,
+								  save.chain = save.chain,
+								  thin = 5)
 		}
 		gibbs.list <- lapply( 1:nrow(X), cpu.fun)
 		cat("\n")
+	}
+	
+	# SEQUENTIAL: Write chains to HDF5 after parallel block
+	if(save.chain & !is.null(h5.file)) {
+		write.chains.to.h5(gibbs.list, h5.file, rownames(X))
 	}
 	
 	jointPost <- newJointPost(bulkID = rownames(X),
@@ -305,7 +441,8 @@ run.gibbs.refPhi.ini <- function(gibbsSampler.obj,
 
 #' function to run final sampling if reference is of the class refPhi
 #'
-#' @param gibbsSampler.obj, a gibbsSampler object
+#' @param gibbsSampler.obj a gibbsSampler object
+#' @param compute.elbo logical, compute ELBO. Default=FALSE.
 #' @import snowfall
 #' @return a theta_f matrix 
 run.gibbs.refPhi.final <- function(gibbsSampler.obj,
@@ -363,9 +500,9 @@ run.gibbs.refPhi.final <- function(gibbsSampler.obj,
 }
 
 
-#' function to run Gibbs sampling if reference is of the class refPhi
+#' function to run Gibbs sampling if reference is of the class refTumor
 #'
-#' @param gibbsSampler.obj, a gibbsSampler object
+#' @param gibbsSampler.obj a gibbsSampler object
 #' @import snowfall
 #' @return a theta_f matrix 
 run.gibbs.refTumor <- function(gibbsSampler.obj){
@@ -428,17 +565,22 @@ run.gibbs.refTumor <- function(gibbsSampler.obj){
 
 
 
-#' function to run Gibbs sampling 
-#'
-#' @param gibbsSampler.obj, a gibbsSampler object
+#' function to run Gibbs sampling (wrapper)
+#' MODIFIED TO SUPPORT CHAIN SAVING
+#' @param gibbsSampler.obj a gibbsSampler object
 #' @param final a logical variable denote whether report only updated theta_f (final=TRUE)
 #' @param if.estimate a logical variable denote whether estimate the run time. Default=TRUE
+#' @param compute.elbo a logical variable denote whether compute ELBO. Default=FALSE.
+#' @param save.chain logical, whether to save full Gibbs chain to HDF5. Default=FALSE.
+#' @param h5.file character, path to HDF5 file. Only used if save.chain=TRUE.
 #' @import snowfall
-#' @return a gibbsSampler object with Z and theta entries, if final=FALSE,  or theta_f matrix if final=TRUE
+#' @return a jointPost or thetaPost object
 run.gibbs <- function(gibbsSampler.obj, 
 					  final,
 					  if.estimate=TRUE,
-					  compute.elbo=FALSE
+					  compute.elbo=FALSE,
+					  save.chain=FALSE,
+					  h5.file=NULL
 					  ){
 	
 	if(final) cat("Run Gibbs sampling using updated reference ... \n")
@@ -450,7 +592,9 @@ run.gibbs <- function(gibbsSampler.obj,
 	
 	if(is(gibbsSampler.obj@reference,"refPhi")) {
 		if(!final) return(run.gibbs.refPhi.ini(gibbsSampler.obj = gibbsSampler.obj, 
-											   compute.elbo = compute.elbo))
+											   compute.elbo = compute.elbo,
+											   save.chain = save.chain,
+											   h5.file = h5.file))
 		else return(run.gibbs.refPhi.final(gibbsSampler.obj = gibbsSampler.obj, 
 										   compute.elbo = compute.elbo))
 	}

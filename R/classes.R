@@ -312,7 +312,7 @@ setClassUnion("theta_f", c("thetaPost", "NULL"))
 #' @slot reference.update an S4 object of class reference 
 #'		to store the updated reference
 #' @slot posterior.theta_f matrix to represent the cell type fraction from the final Gibbs sampling
-#' @slot control_param a list to store all 
+#' @slot control_param a list to store all control parameters including chain saving options
 #'
 #' @export
 setClass("BayesPrism",
@@ -342,7 +342,9 @@ setClass("BayesPrism",
 					  								    n.cores = NULL),
 					  				map = list(),
 					  				key = NA_character_,
-					  				update.gibbs = logical())
+					  				update.gibbs = logical(),
+					  				save.chain = FALSE,
+					  				h5.file = NULL)
          )
 )
 
@@ -360,7 +362,7 @@ setClass("BayesPrism",
 #' @slot reference.update an S4 object of class reference 
 #'		to store the updated reference
 #' @slot posterior.theta_f matrix to represent the cell type fraction from the final Gibbs sampling
-#' @slot control_param a list to store all 
+#' @slot control_param a list to store all control parameters
 #'
 #' @export
 setClass("BayesPrismST",
@@ -385,7 +387,9 @@ setClass("BayesPrismST",
 					  								    maxit = NULL,
 					  								    optimizer = NA_character_, 
 					  								    n.cores = NULL),
-					  				map = list())
+					  				map = list(),
+					  				save.chain = FALSE,
+					  				h5.file = NULL)
          )
 )
 

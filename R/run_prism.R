@@ -48,29 +48,28 @@ valid.gibbs.control <- function(control){
 
 
 
-#' main function to run deconvolution using BayesSamPrism
+#' main function to run deconvolution using BayesPrism with optional chain saving
+#' @param prism a prism object
 #' @param n.cores number of cores to use. Default =1.
-#'		If needs to set different number of cores for Gibbs sampling and optimization,
-#'		supply n.cores in gibbs.control and/or opt.control
 #' @param update.gibbs a logical variable to denote whether run final Gibbs sampling to update theta
+#' @param save.chain logical, whether to save full Gibbs chain to HDF5. Default=FALSE.
+#' @param h5.file character, path to HDF5 file for chain storage. Only used if save.chain=TRUE.
+#'		If NULL and save.chain=TRUE, defaults to "gibbs_chain.h5" in current directory.
 #' @param gibbs.control a list containing parameters of the Gibbs sampler
 #'		chain.length: length of MCMC chain. Default=1000;
 #'		burn.in: length of burn in period. Default=500;
-#'		thinning: retain every # of MCMC samples after the burn in period to reduce auto-correlation. Default=2;
+#'		thinning: retain every # of MCMC samples after the burn in period. Default=2;
 #'		n.cores: number of cores to use. Default uses n.cores in the main argument.
-#'		seed: seed number to use for repoducibility. Default = 123. set to NULL if use pseudo random.
-#'		alpha: a numeric vector to represent the parameter of dirichlet distribution. Default=1. (1E-8 may yield theta=0 due to underflow. causes issue when psuedo.min=0) 
-#' @param opt.control a list containing parameters for the optimization step:
-#'		maxit: maximum number of cycles to interate. Default=100000
-#'		sigma: hyper-parameter of the prior if optimizer="MAP". Default=2.
-#'		optimizer a character string to denote which algorithm to use
-#'			"MAP": the one used by the BayesPrism paper, with cell type-specific gamma under a log-normal prior 
-#'			"MLE": the new algorithm that models a single gamma across cell types. Useful when some cell types are low in Z_k, e.g. spatial data
-#'	 		default to "MAP"
+#'		seed: seed number for reproducibility. Default = 123.
+#'		alpha: parameter of dirichlet distribution. Default=1.
+#' @param opt.control a list containing parameters for the optimization step
+#' @return a BayesPrism object
 #' @export
 run.prism <- function(prism,
 					  n.cores=1,
 					  update.gibbs=TRUE,
+					  save.chain=FALSE,
+					  h5.file=NULL,
 					  gibbs.control=list(),
 					  opt.control=list()
 					  ){
@@ -78,7 +77,14 @@ run.prism <- function(prism,
 	if(! "n.cores" %in% names(gibbs.control)) gibbs.control$n.cores <- n.cores
 	if(! "n.cores" %in% names(opt.control)) opt.control$n.cores <- n.cores
 	stopifnot(is.logical(update.gibbs) & length(update.gibbs)==1)
+	stopifnot(is.logical(save.chain) & length(save.chain)==1)
 	stopifnot(is.numeric(n.cores) & length(n.cores)==1)
+	
+	# Set default HDF5 file path if saving chains but no path provided
+	if(save.chain & is.null(h5.file)) {
+		h5.file <- "gibbs_chain.h5"
+		cat("Chain will be saved to:", h5.file, "\n")
+	}
 	
 	opt.control <- valid.opt.control(opt.control)
 	gibbs.control <- valid.gibbs.control(gibbs.control)
@@ -100,8 +106,11 @@ run.prism <- function(prism,
 								X = prism@mixture,
 								gibbs.control = gibbs.control)
 
+	# Run initial Gibbs with optional chain saving
 	jointPost.ini.cs <- run.gibbs(gibbsSampler.ini.cs, 
-								  final=FALSE)
+								  final=FALSE,
+								  save.chain=save.chain,
+								  h5.file=h5.file)
 
 	#merge over cell states to get cell type (ct) info
 	jointPost.ini.ct <- mergeK(jointPost.obj = jointPost.ini.cs, 
@@ -114,7 +123,9 @@ run.prism <- function(prism,
          				posterior.initial.cellType = jointPost.ini.ct,
          				control_param = list(gibbs.control = gibbs.control, 
          									 opt.control = opt.control,
-         									 update.gibbs = update.gibbs)
+         									 update.gibbs = update.gibbs,
+         									 h5.file = h5.file,
+         									 save.chain = save.chain)
          			 )
 	else{
 		#contruct the new gibbsSampler object with updated reference
@@ -129,8 +140,10 @@ run.prism <- function(prism,
 									X = prism@mixture,
 									gibbs.control = gibbs.control)
 		
+		# Run final Gibbs (usually doesn't save chains for this step)
 		theta_f <- run.gibbs(gibbsSampler.update, 
-							 final=TRUE)
+							 final=TRUE,
+							 save.chain=FALSE)
 		
 		bp.obj <- new("BayesPrism",
 		 				prism = prism,
@@ -140,34 +153,34 @@ run.prism <- function(prism,
          				posterior.theta_f = theta_f,
          				control_param = list(gibbs.control = gibbs.control, 
          									 opt.control = opt.control,
-         									 update.gibbs = update.gibbs)
+         									 update.gibbs = update.gibbs,
+         									 h5.file = h5.file,
+         									 save.chain = save.chain)
          			 )
 	}
 	
 	unlink(tmp.dir, recursive = TRUE)
+	
+	cat("BayesPrism run complete.\n")
+	if(save.chain & !is.null(h5.file))
+		cat("Gibbs chain saved to:", h5.file, "\n")
 	
 	return(bp.obj) 		
 }
 
 
 
-#' function to run update gibbs sampling for BayesSamPrism output with initial gibbs results
-#' @param bp a BayesSamPrism output with initial gibbs results
+#' function to run update gibbs sampling for BayesPrism output with initial gibbs results
+#' @param bp a BayesPrism output with initial gibbs results
 #' @param gibbs.control a list containing parameters of the Gibbs sampler
 #'		chain.length: length of MCMC chain. Default=1000;
 #'		burn.in: length of burn in period. Default=500;
-#'		thinning: retain every # of MCMC samples after the burn in period to reduce auto-correlation. Default=2;
-#'		n.cores: number of cores to use. Default =1. Will be over-written by n.cores in the main argument.
-#'		seed: seed number to use for repoducibility. Default = 123. set to NULL if use pseudo random.
-#'		alpha: a numeric vector to represent the parameter of dirichlet distribution 
-#' @param opt.control a list containing parameters for the optimization step:
-#'		maxit: maximum number of cycles to interate. Default=100000
-#'		sigma: hyper-parameter of the prior if optimizer="MAP". Default=2.
-#'		optimizer a character string to denote which algorithm to use
-#'			"MAP": the one used by the BayesPrism paper, with cell type-specific gamma under a log-normal prior 
-#'			"MLE": the new algorithm that models a single gamma across cell types. Useful when some cell types are low in Z_k, e.g. spatial data
-#'	 		default to "MAP"
-#' @return a BayesSamPrism object
+#'		thinning: retain every # of MCMC samples after the burn in period. Default=2;
+#'		n.cores: number of cores to use. Default =1.
+#'		seed: seed number for reproducibility. Default = 123.
+#'		alpha: parameter of dirichlet distribution. Default=1.
+#' @param opt.control a list containing parameters for the optimization step
+#' @return a BayesPrism object
 #' @export
 update.theta <- function(bp,
 					     gibbs.control=list(),
