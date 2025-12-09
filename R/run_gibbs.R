@@ -52,13 +52,15 @@ sample.Z.theta_n <- function(X_n,
 	theta_n.sum <- rep(0, K)
 	theta_n2.sum <- rep(0, K)
 	
+	# Initialize chain tracking variables
+	saved_samples <- 0
+	chain_idx <- 0
+	
 	# Storage for chain if requested
 	if(save.chain) {
 		n_chain_samples <- ceiling(length(gibbs.idx) / thin)
 		chain_theta <- array(NA, dim = c(n_chain_samples, K))
 		chain_Z <- array(NA, dim = c(n_chain_samples, G, K))
-		chain_idx <- 0
-		saved_samples <- 0
 	}
 	
 	#variable for computing ELBO
@@ -90,9 +92,7 @@ sample.Z.theta_n <- function(X_n,
 				chain_Z[chain_idx, , ] <- Z_n.i
 			}
 			
-			if(save.chain) {
-				saved_samples <- saved_samples + 1
-			}
+			saved_samples <- saved_samples + 1
 			
 			if(compute.elbo){
 				multinom.coef.i <- sum(lfactorial(Z_nk.i)) - sum(lfactorial(Z_n.i))
