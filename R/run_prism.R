@@ -48,13 +48,18 @@ valid.gibbs.control <- function(control){
 
 
 
-#' main function to run deconvolution using BayesPrism with optional chain saving
+#' main function to run deconvolution using BayesPrism with optional chain saving and Z.cv computation
 #' @param prism a prism object
 #' @param n.cores number of cores to use. Default =1.
 #' @param update.gibbs a logical variable to denote whether run final Gibbs sampling to update theta
-#' @param save.chain logical, whether to save full Gibbs chain to HDF5. Default=FALSE.
-#' @param h5.file character, path to HDF5 file for chain storage. Only used if save.chain=TRUE.
-#'		If NULL and save.chain=TRUE, defaults to "gibbs_chain.h5" in current directory.
+#' @param save.chain character, "none", "theta", or "all". Default="none".
+#'  - "none": no chains saved (fastest, default)
+#'  - "theta": save posterior theta chains (cell type fractions) only
+#'  - "all": save posterior theta and Z chains (cell type expression matrices)
+#' @param h5.file character, path to HDF5 file for chain storage. Only used if save.chain != "none".
+#'		If NULL and save.chain != "none", defaults to "gibbs_chain.h5" in current directory.
+#' @param compute.z.cv logical, whether to compute coefficient of variation for Z. Default=FALSE.
+#'		Note: theta.cv is always computed; Z.cv computation adds overhead.
 #' @param gibbs.control a list containing parameters of the Gibbs sampler
 #'		chain.length: length of MCMC chain. Default=1000;
 #'		burn.in: length of burn in period. Default=500;
@@ -68,8 +73,9 @@ valid.gibbs.control <- function(control){
 run.prism <- function(prism,
 					  n.cores=1,
 					  update.gibbs=TRUE,
-					  save.chain=FALSE,
+					  save.chain="none",
 					  h5.file=NULL,
+					  compute.z.cv=FALSE,
 					  gibbs.control=list(),
 					  opt.control=list()
 					  ){
@@ -77,11 +83,13 @@ run.prism <- function(prism,
 	if(! "n.cores" %in% names(gibbs.control)) gibbs.control$n.cores <- n.cores
 	if(! "n.cores" %in% names(opt.control)) opt.control$n.cores <- n.cores
 	stopifnot(is.logical(update.gibbs) & length(update.gibbs)==1)
-	stopifnot(is.logical(save.chain) & length(save.chain)==1)
+	stopifnot(is.character(save.chain) & length(save.chain)==1)
+	stopifnot(save.chain %in% c("none", "theta", "all"))
+	stopifnot(is.logical(compute.z.cv) & length(compute.z.cv)==1)
 	stopifnot(is.numeric(n.cores) & length(n.cores)==1)
 	
 	# Set default HDF5 file path if saving chains but no path provided
-	if(save.chain & is.null(h5.file)) {
+	if(save.chain != "none" & is.null(h5.file)) {
 		h5.file <- "gibbs_chain.h5"
 		cat("Chain will be saved to:", h5.file, "\n")
 	}
@@ -109,6 +117,7 @@ run.prism <- function(prism,
 	# Run initial Gibbs with optional chain saving
 	jointPost.ini.cs <- run.gibbs(gibbsSampler.ini.cs, 
 								  final=FALSE,
+								  compute.z.cv=compute.z.cv,
 								  save.chain=save.chain,
 								  h5.file=h5.file)
 
@@ -143,7 +152,7 @@ run.prism <- function(prism,
 		# Run final Gibbs (usually doesn't save chains for this step)
 		theta_f <- run.gibbs(gibbsSampler.update, 
 							 final=TRUE,
-							 save.chain=FALSE)
+							 save.chain="none")
 		
 		bp.obj <- new("BayesPrism",
 		 				prism = prism,
@@ -162,7 +171,7 @@ run.prism <- function(prism,
 	unlink(tmp.dir, recursive = TRUE)
 	
 	cat("BayesPrism run complete.\n")
-	if(save.chain & !is.null(h5.file))
+	if(save.chain != "none" & !is.null(h5.file))
 		cat("Gibbs chain saved to:", h5.file, "\n")
 	
 	return(bp.obj) 		

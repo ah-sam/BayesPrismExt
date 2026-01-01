@@ -2,18 +2,21 @@
 
 run.prism.st <- function(prism,
 					  	 n.cores=1,
-					  	 save.chain=FALSE,
+					  	 save.chain="none",
 					  	 h5.file=NULL,
+					  	 compute.z.cv=FALSE,
 					  	 gibbs.control=list(),
 					  	 opt.control=list(optimizer="MLE")){
 	
 	if(! "n.cores" %in% names(gibbs.control)) gibbs.control$n.cores <- n.cores
 	if(! "n.cores" %in% names(opt.control)) opt.control$n.cores <- n.cores
 	stopifnot(is.numeric(n.cores) & length(n.cores)==1)
-	stopifnot(is.logical(save.chain) & length(save.chain)==1)
+	stopifnot(is.character(save.chain) & length(save.chain)==1)
+	stopifnot(save.chain %in% c("none", "theta", "all"))
+	stopifnot(is.logical(compute.z.cv) & length(compute.z.cv)==1)
 	
 	# Set default HDF5 file path if saving chains but no path provided
-	if(save.chain & is.null(h5.file)) {
+	if(save.chain != "none" & is.null(h5.file)) {
 		h5.file <- "gibbs_chain.h5"
 		cat("Chain will be saved to:", h5.file, "\n")
 	}
@@ -28,7 +31,7 @@ run.prism.st <- function(prism,
 								gibbs.control = gibbs.control)
 
 	jointPost.ini <- run.gibbs(gibbsSampler.ini, final=FALSE, 
-							   save.chain=save.chain, h5.file=h5.file)
+							   save.chain=save.chain, h5.file=h5.file, compute.z.cv=compute.z.cv)
 
 	#perform MLE estimate for gamma
 	psi <- updateReference (Z = jointPost.ini@Z,
@@ -43,7 +46,7 @@ run.prism.st <- function(prism,
 								gibbs.control = gibbs.control)
 	
 	jointPost.update <- run.gibbs(gibbsSampler.update, final=FALSE,
-								  save.chain=FALSE)
+								  save.chain="none", compute.z.cv=compute.z.cv)
 
 	#merge over cell states to get cell type (ct) info
 	jointPost.update.ct <- mergeK(jointPost.obj = jointPost.update, 
@@ -60,7 +63,7 @@ run.prism.st <- function(prism,
          								h5.file = h5.file))
 	
 	cat("BayesPrism.st run complete.\n")
-	if(save.chain & !is.null(h5.file))
+	if(save.chain != "none" & !is.null(h5.file))
 		cat("Gibbs chain saved to:", h5.file, "\n")
          			 
 	return(bp.obj) 		

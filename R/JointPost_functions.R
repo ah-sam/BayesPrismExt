@@ -43,10 +43,12 @@ newJointPost <- function(bulkID,
 	}
 
 	# populate Z.cv if available in gibbs.list entries, otherwise leave NA
+	# Z.cv_n will be NULL if compute.cv=FALSE
 	if(!is.null(gibbs.list[[1]]$Z.cv_n)){
 		for (n in 1:N) Z.cv[n,,] <- gibbs.list[[n]]$Z.cv_n
 	}
 
+	# theta.cv is always computed
 	if(!is.null(gibbs.list[[1]]$theta.cv_n)){
 		for (n in 1:N) theta.cv[n,] <- gibbs.list[[n]]$theta.cv_n
 	}

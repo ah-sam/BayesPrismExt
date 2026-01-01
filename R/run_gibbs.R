@@ -30,6 +30,7 @@ rdirichlet <- function(alpha){
 #' @param alpha a numeric value to denote the symmetric Dirichlet prior 
 #' @param gibbs.idx a numeric vector to denote the index of samples to be retained from MCMC chain
 #' @param compute.elbo a logical variable to denote if compute ELBO. Default=FALSE.
+#' @param compute.z.cv a logical variable to denote if compute Z coefficient of variation. Default=FALSE.
 #' @param save.chain logical, if TRUE return full chain instead of just posterior mean. Default=FALSE.
 #' @param thin integer, thinning factor for saving chain. Default=5. Only used if save.chain=TRUE.
 #' return a list containing posterior mean of Z_n and theta_n (or full chains if save.chain=TRUE)
@@ -38,6 +39,7 @@ sample.Z.theta_n <- function(X_n,
 			        		 	alpha,
 			        		 	gibbs.idx,
 			        		 	compute.elbo=FALSE,
+			        		 	compute.z.cv=FALSE,
 			        		 	save.chain=FALSE,
 			        		 	thin=5){
 		
@@ -106,7 +108,7 @@ sample.Z.theta_n <- function(X_n,
 	samples.size <- length(gibbs.idx)
 	
 	Z_n <- Z_n.sum / samples.size
-	Z.cv_n <- sqrt(Z_n2.sum / samples.size - (Z_n^2)) / Z_n
+	Z.cv_n <- if(compute.z.cv) sqrt(Z_n2.sum / samples.size - (Z_n^2)) / Z_n else NULL
 	theta_n <- theta_n.sum / samples.size
 	theta.cv_n <- sqrt(theta_n2.sum / samples.size - (theta_n^2)) / theta_n
 	gibbs.constant <- multinom.coef / samples.size
@@ -267,8 +269,9 @@ estimate.gibbs.time <- function(gibbsSampler.obj,
 #' @param chain.length total chain length
 #' @param burn.in burn-in length
 #' @param thinning thinning rate
+#' @param save.chain character, "none", "theta", or "all"
 init.h5.gibbs <- function(h5.file, n_samples, n_genes, n_celltypes, 
-                          chain.length, burn.in, thinning) {
+                          chain.length, burn.in, thinning, save.chain="all") {
 	
 	library(rhdf5)
 	
@@ -281,23 +284,28 @@ init.h5.gibbs <- function(h5.file, n_samples, n_genes, n_celltypes,
 	# Create file
 	h5createFile(h5.file)
 	
-	# theta dataset: n_samples x n_iterations x n_celltypes
-	h5createDataset(h5.file, "theta", 
-	                dims = c(n_samples, n_iterations, n_celltypes),
-	                storage.mode = "double",
-	                chunk = c(1, 50, n_celltypes),
-	                level = 9)  # Compression level 9
+	# theta dataset: n_samples x n_iterations x n_celltypes (always created if save.chain != "none")
+	if(save.chain %in% c("theta", "all")) {
+		h5createDataset(h5.file, "theta", 
+		                dims = c(n_samples, n_iterations, n_celltypes),
+		                storage.mode = "double",
+		                chunk = c(1, 50, n_celltypes),
+		                level = 9)  # Compression level 9
+	}
 	
-	# Z dataset: n_samples x n_iterations x n_genes x n_celltypes
-	h5createDataset(h5.file, "Z", 
-	                dims = c(n_samples, n_iterations, n_genes, n_celltypes),
-	                storage.mode = "double",
-	                chunk = c(1, 50, n_genes, n_celltypes),
-	                level = 9)  # Compression level 9
+	# Z dataset: n_samples x n_iterations x n_genes x n_celltypes (only if save.chain == "all")
+	if(save.chain == "all") {
+		h5createDataset(h5.file, "Z", 
+		                dims = c(n_samples, n_iterations, n_genes, n_celltypes),
+		                storage.mode = "double",
+		                chunk = c(1, 50, n_genes, n_celltypes),
+		                level = 9)  # Compression level 9
+	}
 	
 	cat("HDF5 file initialized at:", h5.file, "\n")
 	cat("Dimensions - Samples:", n_samples, "Iterations:", n_iterations, 
 	    "Genes:", n_genes, "CellTypes:", n_celltypes, "\n")
+	cat("Saving:", save.chain, "\n")
 }
 
 
@@ -306,7 +314,8 @@ init.h5.gibbs <- function(h5.file, n_samples, n_genes, n_celltypes,
 #' @param gibbs.list list of results from parallel sampling (each element has chain_theta, chain_Z)
 #' @param h5.file character, path to HDF5 file
 #' @param sample.names character vector of sample names/IDs
-write.chains.to.h5 <- function(gibbs.list, h5.file, sample.names) {
+#' @param save.chain character, "none", "theta", or "all"
+write.chains.to.h5 <- function(gibbs.list, h5.file, sample.names, save.chain="all") {
 	library(rhdf5)
 	
 	cat("Writing Gibbs chains to HDF5...\n")
@@ -314,14 +323,16 @@ write.chains.to.h5 <- function(gibbs.list, h5.file, sample.names) {
 	for(n in 1:length(gibbs.list)) {
 		result <- gibbs.list[[n]]
 		
-		if(!is.null(result$chain_theta)) {
+		if(!is.null(result$chain_theta) & save.chain %in% c("theta", "all")) {
 			# Write theta chain for this sample
 			h5write(result$chain_theta, h5.file, "theta", 
 			        index = list(n, 1:nrow(result$chain_theta), NULL))
 			
-			# Write Z chain for this sample
-			h5write(result$chain_Z, h5.file, "Z", 
-			        index = list(n, 1:nrow(result$chain_Z), NULL, NULL))
+			# Write Z chain for this sample (only if save.chain == "all")
+			if(save.chain == "all" & !is.null(result$chain_Z)) {
+				h5write(result$chain_Z, h5.file, "Z", 
+				        index = list(n, 1:nrow(result$chain_Z), NULL, NULL))
+			}
 			
 			cat("Sample", n, "-", sample.names[n], "written\n")
 		}
@@ -355,14 +366,16 @@ read.h5.chain <- function(h5.file, sample.idx, param = "theta") {
 #' MODIFIED TO SUPPORT CHAIN SAVING
 #' @param gibbsSampler.obj a gibbsSampler object
 #' @param compute.elbo logical, compute ELBO. Default=FALSE.
-#' @param save.chain logical, save full chains to HDF5. Default=FALSE.
-#' @param h5.file character, path to HDF5 file. Required if save.chain=TRUE.
+#' @param compute.z.cv logical, compute Z coefficient of variation. Default=FALSE.
+#' @param save.chain character, "none", "theta", or "all". Default="none".
+#' @param h5.file character, path to HDF5 file. Required if save.chain != "none".
 #' @import snowfall
 #' @return a jointPost object with Z and theta entries 
 run.gibbs.refPhi.ini <- function(gibbsSampler.obj,
-							 	   compute.elbo,
-							 	   save.chain=FALSE,
-							 	   h5.file=NULL){
+							   compute.elbo,
+							   compute.z.cv=FALSE,
+							   save.chain="none",
+							   h5.file=NULL){
 	
 	phi <- gibbsSampler.obj@reference@phi
 	X <- gibbsSampler.obj@X
@@ -376,13 +389,10 @@ run.gibbs.refPhi.ini <- function(gibbsSampler.obj,
 	rdirichlet <- BayesPrismExt:::rdirichlet
 	
 	# Initialize HDF5 if saving chains
-	if(save.chain & !is.null(h5.file)) {
+	if(save.chain != "none" & !is.null(h5.file)) {
 		init.h5.gibbs(h5.file, nrow(X), ncol(phi), nrow(phi),
-		              gibbs.control$chain.length, gibbs.control$burn.in, gibbs.control$thinning)
-	}
-	
-	cat("Start run... \n")
-	
+		              gibbs.control$chain.length, gibbs.control$burn.in, gibbs.control$thinning,
+		              save.chain=save.chain)
 	if(gibbs.control$n.cores>1){	
 		#parallel using snowfall	
 		sfInit(parallel = TRUE, cpus = gibbs.control$n.cores, type = "SOCK" )
@@ -398,12 +408,13 @@ run.gibbs.refPhi.ini <- function(gibbsSampler.obj,
 							  alpha = alpha, 
 							  gibbs.idx = gibbs.idx, 
 							  compute.elbo = compute.elbo,
-							  save.chain = save.chain,
-							  thin = 5)		
+						  compute.z.cv = compute.z.cv,
+						  save.chain = (save.chain != "none"),
+						  thin = 5)		
 		}
 		tmp.dir <- tempdir(check=TRUE)
 		sfExport("phi", "alpha", "gibbs.idx", "seed", 
-				 	"compute.elbo", "sample.Z.theta_n","rdirichlet","tmp.dir", "save.chain")
+			 	"compute.elbo", "compute.z.cv", "sample.Z.theta_n","rdirichlet","tmp.dir", "save.chain")
 		environment(cpu.fun) <- globalenv()
 		gibbs.list <- sfLapply( 1:nrow(X), cpu.fun)
 		sfStop()
@@ -415,7 +426,8 @@ run.gibbs.refPhi.ini <- function(gibbsSampler.obj,
 				cat(n," ")
 				sample.Z.theta_n (X_n = X[n,], phi = phi, alpha = alpha, 
 								  gibbs.idx = gibbs.idx, compute.elbo = compute.elbo,
-								  save.chain = save.chain,
+							  compute.z.cv = compute.z.cv,
+							  save.chain = (save.chain != "none"),
 								  thin = 5)
 		}
 		gibbs.list <- lapply( 1:nrow(X), cpu.fun)
@@ -423,8 +435,8 @@ run.gibbs.refPhi.ini <- function(gibbsSampler.obj,
 	}
 	
 	# SEQUENTIAL: Write chains to HDF5 after parallel block
-	if(save.chain & !is.null(h5.file)) {
-		write.chains.to.h5(gibbs.list, h5.file, rownames(X))
+	if(save.chain != "none" & !is.null(h5.file)) {
+		write.chains.to.h5(gibbs.list, h5.file, rownames(X), save.chain=save.chain)
 	}
 	
 	jointPost <- newJointPost(bulkID = rownames(X),
@@ -571,15 +583,17 @@ run.gibbs.refTumor <- function(gibbsSampler.obj){
 #' @param final a logical variable denote whether report only updated theta_f (final=TRUE)
 #' @param if.estimate a logical variable denote whether estimate the run time. Default=TRUE
 #' @param compute.elbo a logical variable denote whether compute ELBO. Default=FALSE.
-#' @param save.chain logical, whether to save full Gibbs chain to HDF5. Default=FALSE.
-#' @param h5.file character, path to HDF5 file. Only used if save.chain=TRUE.
+#' @param compute.z.cv a logical variable denote whether compute Z coefficient of variation. Default=FALSE.
+#' @param save.chain character, "none", "theta", or "all". Default="none".
+#' @param h5.file character, path to HDF5 file. Only used if save.chain != "none".
 #' @import snowfall
 #' @return a jointPost or thetaPost object
 run.gibbs <- function(gibbsSampler.obj, 
 					  final,
 					  if.estimate=TRUE,
 					  compute.elbo=FALSE,
-					  save.chain=FALSE,
+					  compute.z.cv=FALSE,
+					  save.chain="none",
 					  h5.file=NULL
 					  ){
 	
@@ -593,6 +607,7 @@ run.gibbs <- function(gibbsSampler.obj,
 	if(is(gibbsSampler.obj@reference,"refPhi")) {
 		if(!final) return(run.gibbs.refPhi.ini(gibbsSampler.obj = gibbsSampler.obj, 
 											   compute.elbo = compute.elbo,
+											   compute.z.cv = compute.z.cv,
 											   save.chain = save.chain,
 											   h5.file = h5.file))
 		else return(run.gibbs.refPhi.final(gibbsSampler.obj = gibbsSampler.obj, 
